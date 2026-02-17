@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>2icy | Chrome Heart Globe</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <!-- MediaPipe for Hand Tracking -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #010103;
+            font-family: 'Inter', sans-serif;
+            color: white;
+        }
+        #canvas-container {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1;
+        }
+        .ui-layer {
+            position: relative;
+            z-index: 10;
+            pointer-events: none;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+        }
+        .ui-layer * {
+            pointer-events: auto;
+        }
+        .glass-card {
+            background: rgba(255, 255, 255, 0.02);
+            backdrop-filter: blur(15px);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: 1rem;
+        }
+        #webcam-preview {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            width: 130px;
+            height: 98px;
+            border-radius: 12px;
+            border: 1px solid rgba(59, 130, 246, 0.3);
+            z-index: 50;
+            transform: scaleX(-1);
+            background: #000;
+            opacity: 0.4;
+            transition: opacity 0.3s;
+        }
+        #webcam-preview:hover {
+            opacity: 0.8;
+        }
+        .status-badge {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 8px 14px;
+            font-size: 0.65rem;
+            z-index: 100;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            font-weight: 600;
+        }
+        .logo {
+            position: fixed;
+            top: 30px;
+            left: 40px;
+            z-index: 100;
+            font-size: 1.5rem;
+            font-weight: 800;
+            letter-spacing: -0.05em;
+            text-transform: lowercase;
+        }
+        /* Custom Message Styling */
+        #zoom-message {
+            opacity: 0;
+            transform: scale(0.8);
+            transition: all 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            font-size: 2.5rem;
+            font-weight: 900;
+            letter-spacing: -0.02em;
+            color: #ffffff;
+            text-shadow: 0 0 20px rgba(0, 150, 255, 0.8);
+            pointer-events: none;
+            max-width: 80%;
+        }
+        #zoom-message.visible {
+            opacity: 1;
+            transform: scale(1);
+        }
+        .bottom-card {
+            position: fixed;
+            bottom: 40px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 10;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="logo">2icy</div>
+
+    <!-- UI Overlay -->
+    <div class="ui-layer">
+        <!-- The Message that appears on zoom -->
+        <div id="zoom-message">dont be my valentine niomyi!!</div>
+    </div>
+
+    <!-- Minimal Bottom Card -->
+    <div class="bottom-card">
+        <div class="glass-card p-4 flex items-center gap-4 animate-pulse opacity-60 hover:opacity-100 transition-opacity cursor-default">
+            <div class="w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center font-bold text-sm">₿</div>
+            <div class="text-left">
+                <div class="text-[10px] text-gray-500 font-bold uppercase tracking-widest">Active nodes</div>
+                <div class="text-xs font-bold">2icy Chrome Network Syncing</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Status Badge -->
+    <div id="status" class="glass-card status-badge text-blue-500">
+        Connecting...
+    </div>
+
+    <!-- Webcam Preview -->
+    <video id="webcam-preview" autoplay playsinline></video>
+
+    <!-- 3D Globe Container -->
+    <div id="canvas-container"></div>
+
+    <script>
+        let scene, camera, renderer, heartGlobe, stars, light;
+        const container = document.getElementById('canvas-container');
+        const zoomMessage = document.getElementById('zoom-message');
+        let targetZoom = 22;
+        let currentZoom = 35;
+
+        // Texture for the particles - Metallic/Chrome Look
+        function createChromeHeartTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 128;
+            canvas.height = 128;
+            const ctx = canvas.getContext('2d');
+            
+            const drawHeart = (x, y, size) => {
+                ctx.beginPath();
+                ctx.moveTo(x, y + size / 4);
+                ctx.quadraticCurveTo(x, y, x + size / 2, y);
+                ctx.quadraticCurveTo(x + size, y, x + size, y + size / 4);
+                ctx.quadraticCurveTo(x + size, y + size / 2, x + size / 2, y + size * 0.75);
+                ctx.lineTo(x, y + size);
+                ctx.lineTo(x - size / 2, y + size * 0.75);
+                ctx.quadraticCurveTo(x - size, y + size / 2, x - size, y + size / 4);
+                ctx.quadraticCurveTo(x - size, y, x - size / 2, y);
+                ctx.quadraticCurveTo(x, y, x, y + size / 4);
+                ctx.fill();
+            };
+
+            const x = 64, y = 64, size = 60;
+
+            const silverGrad = ctx.createLinearGradient(x - size, y, x + size, y + size);
+            silverGrad.addColorStop(0, '#777777');
+            silverGrad.addColorStop(0.3, '#ffffff');
+            silverGrad.addColorStop(0.5, '#bbbbbb');
+            silverGrad.addColorStop(0.8, '#ffffff');
+            silverGrad.addColorStop(1, '#666666');
+            
+            ctx.fillStyle = silverGrad;
+            drawHeart(x, y, size);
+
+            ctx.save();
+            ctx.globalCompositeOperation = 'source-atop';
+            const reflectGrad = ctx.createRadialGradient(x - 15, y - 10, 5, x, y, size);
+            reflectGrad.addColorStop(0, 'rgba(255, 255, 255, 0.9)');
+            reflectGrad.addColorStop(0.2, 'rgba(255, 255, 255, 0.4)');
+            reflectGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+            ctx.fillStyle = reflectGrad;
+            ctx.fillRect(0, 0, 128, 128);
+            ctx.restore();
+
+            ctx.strokeStyle = '#ffffff';
+            ctx.lineWidth = 1.5;
+            ctx.globalAlpha = 0.5;
+            drawHeart(x, y, size);
+            
+            return new THREE.CanvasTexture(canvas);
+        }
+
+        function initThree() {
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.z = currentZoom;
+
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            container.appendChild(renderer.domElement);
+
+            const chromeHeartTex = createChromeHeartTexture();
+
+            const globeRadius = 10;
+            const particleCount = 20000;
+            const positions = new Float32Array(particleCount * 3);
+            const colors = new Float32Array(particleCount * 3);
+            
+            for (let i = 0; i < particleCount; i++) {
+                const phi = Math.acos(-1 + (2 * i) / particleCount);
+                const theta = Math.sqrt(particleCount * Math.PI) * phi;
+                const r = globeRadius + (Math.random() - 0.5) * 0.2;
+                
+                positions[i * 3] = r * Math.cos(theta) * Math.sin(phi);
+                positions[i * 3 + 1] = r * Math.sin(theta) * Math.sin(phi);
+                positions[i * 3 + 2] = r * Math.cos(phi);
+
+                const mixedColor = new THREE.Color().setHSL(0.58 + Math.random() * 0.05, 0.6, 0.6 + Math.random() * 0.3);
+                colors[i * 3] = mixedColor.r;
+                colors[i * 3 + 1] = mixedColor.g;
+                colors[i * 3 + 2] = mixedColor.b;
+            }
+
+            const globeGeo = new THREE.BufferGeometry();
+            globeGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            globeGeo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+            const globeMat = new THREE.PointsMaterial({
+                size: 0.25,
+                map: chromeHeartTex,
+                transparent: true,
+                alphaTest: 0.1,
+                vertexColors: true,
+                blending: THREE.NormalBlending
+            });
+
+            heartGlobe = new THREE.Points(globeGeo, globeMat);
+            scene.add(heartGlobe);
+
+            const starGeo = new THREE.BufferGeometry();
+            const starCount = 2000;
+            const starPositions = new Float32Array(starCount * 3);
+            for(let i=0; i<starCount*3; i++) starPositions[i] = (Math.random() - 0.5) * 200;
+            starGeo.setAttribute('position', new THREE.BufferAttribute(starPositions, 3));
+            stars = new THREE.Points(starGeo, new THREE.PointsMaterial({ size: 0.04, color: 0x4466ff, transparent: true, opacity: 0.5 }));
+            scene.add(stars);
+
+            light = new THREE.PointLight(0x00ccff, 4, 100);
+            light.position.set(20, 20, 30);
+            scene.add(light);
+
+            animate();
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            
+            heartGlobe.rotation.y += 0.0012;
+            heartGlobe.rotation.x += 0.0001;
+            stars.rotation.y -= 0.0001;
+
+            currentZoom += (targetZoom - currentZoom) * 0.08;
+            camera.position.z = currentZoom;
+            
+            // Logic to show/hide text based on zoom level
+            // When currentZoom is small (less than 18), show the message
+            if (currentZoom < 18) {
+                zoomMessage.classList.add('visible');
+            } else {
+                zoomMessage.classList.remove('visible');
+            }
+
+            heartGlobe.material.size = Math.max(0.15, 0.5 - (currentZoom / 80));
+
+            renderer.render(scene, camera);
+        }
+
+        const videoElement = document.getElementById('webcam-preview');
+        const statusElement = document.getElementById('status');
+
+        function onResults(results) {
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                statusElement.innerText = "Gesture Active";
+                statusElement.style.color = "#4ade80";
+                
+                const hand = results.multiHandLandmarks[0];
+                const distance = Math.sqrt(
+                    Math.pow(hand[8].x - hand[4].x, 2) + 
+                    Math.pow(hand[8].y - hand[4].y, 2)
+                );
+
+                const zoomVal = 42 - (distance * 120); 
+                targetZoom = Math.max(11, Math.min(48, zoomVal));
+            } else {
+                statusElement.innerText = "Waiting for hand";
+                statusElement.style.color = "#3b82f6";
+                targetZoom = 26;
+            }
+        }
+
+        const hands = new Hands({
+            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+        });
+
+        hands.setOptions({
+            maxNumHands: 1,
+            modelComplexity: 1,
+            minDetectionConfidence: 0.7,
+            minTrackingConfidence: 0.7
+        });
+
+        hands.onResults(onResults);
+
+        const cameraFeed = new Camera(videoElement, {
+            onFrame: async () => {
+                await hands.send({image: videoElement});
+            },
+            width: 640,
+            height: 480
+        });
+
+        window.onload = () => {
+            initThree();
+            cameraFeed.start();
+        };
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
+</body>
+</html>
